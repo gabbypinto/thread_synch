@@ -22,6 +22,9 @@ extern unsigned int ip_checksum(unsigned char *data, int length);
 #define MMAP_SIZE 4096
 #define PAYLOAD_SIZE 34
 const char *name = "OS-IPC";
+sem_t mutex;
+sem_t full;
+sem_t empty;
 
 typedef struct {
   int item_no;          //number of the item produced
@@ -29,7 +32,7 @@ typedef struct {
   unsigned char payload[PAYLOAD_SIZE];      //random generated data
 } item;
 
-item buffer_item[MEMSIZE];
+//item buffer_item[MEMSIZE];
 item* buffer_item;
 
 
@@ -48,7 +51,7 @@ void sighandler(int signum) {
   // exit(1);
 }
 
-void *thread_producer_function(int shared_mem, sem_t mutex, sem_t counting, sem_t empty)
+void *thread_producer_function()
 {
 
   //  printf("thread_function PRODUCER is running. Message is %s\n", message);
@@ -75,10 +78,10 @@ void *thread_producer_function(int shared_mem, sem_t mutex, sem_t counting, sem_
 
 
     /* configure the size of the shared memory object */
-    ftruncate(shared_mem, MMAP_SIZE);
+  //  ftruncate(shared_mem, MMAP_SIZE);
 
     /* memory map the shared memory object */
-    ptr = mmap(0, MMAP_SIZE, PROT_WRITE, MAP_SHARED, shared_mem, 0);
+  //  ptr = mmap(0, MMAP_SIZE, PROT_WRITE, MAP_SHARED, shared_mem, 0);
 
     buffer = (unsigned char *)ptr;
     next_produced.item_no = 0;
@@ -87,7 +90,7 @@ void *thread_producer_function(int shared_mem, sem_t mutex, sem_t counting, sem_
       //1. increment the buffer count (item_no)
       next_produced.item_no++;
 
-      wait(&counting);
+      wait(&full);
       wait(&mutex);
 
       for(i=0;i<nbytes;i++){
@@ -98,15 +101,11 @@ void *thread_producer_function(int shared_mem, sem_t mutex, sem_t counting, sem_
       //2. calculate the 16-bit checksum (cksum)
       next_produced.cksum = (unsigned short) ip_checksum(&next_produced.payload[0],PAYLOAD_SIZE);
       //printf("Checksum :0x%x (%s) \n",cksum,argv[1]);
-      memcpy((void *)&buffer_item[in],&next_produced,sizeof(next_produced));
 
-      signal(&mutex, sighandler);
+      memcpy((void *)&buffer_item,&next_produced,sizeof(next_produced));
 
-      //sem_post
-      signal(&counting, sighandler);
-
-      buffer_item[in] = next_produced;       //store next_produced into share buffer size
-      in = (in+1) % MEMSIZE;
+      sem_post(&mutex);
+      sem_post(&full);
 
       sigaction(SIGINT, &act, 0);
     }
@@ -115,7 +114,7 @@ void *thread_producer_function(int shared_mem, sem_t mutex, sem_t counting, sem_
 
 }
 
-void *thread_consumer_function(int shared_mem, sem_t mutex, sem_t counting, sem_t empty)
+void *thread_consumer_function()
 {
 //one signal handler for global...do in main (once)
   int   shm_fd;
@@ -137,7 +136,7 @@ void *thread_consumer_function(int shared_mem, sem_t mutex, sem_t counting, sem_
 
    while(true){
      //decrement empty
-     wait(&counting);  //sem_wait
+     wait(&full);  //sem_wait
      wait(&mutex); //use  mutex lock instead
   //
   //   while(in == out){
@@ -147,8 +146,8 @@ void *thread_consumer_function(int shared_mem, sem_t mutex, sem_t counting, sem_
 
     memcpy((void*)&cksum2, (void*)&buffer[PAYLOAD_SIZE],sizeof(unsigned short));
     //unlock mutex
-    next_consumed = buffer_item[out];
-    out = (out+1) % MEMSIZE;
+  //  next_consumed = buffer_item[out];
+  //  out = (out+1) % MEMSIZE;
 
     //consumer the item in next_consumed
     //1. check for no skipped buffers (item_no is continguous)
@@ -174,9 +173,9 @@ void *thread_consumer_function(int shared_mem, sem_t mutex, sem_t counting, sem_
     sigaction(SIGINT, &act, 0);
     bufferCount++;
     //pthread mutex unlock
-    signal(&mutex,sighandler);
+    sem_post(&mutex);
     //sem post
-    signal(&empty,sighandler);
+    sem_post(&empty);
     next_consumed.item_no++;
     }
 
@@ -200,23 +199,28 @@ int main (int argc, char *argv[]){
 
   nitems = (int) argv[1];
 //allocate buffer based on nitem, use new or malloc. ie. if user typed in two item allocate 80bytessss
+  buffer_item = malloc(nitems*40); //?
 //check if item exceeds cap, exit if too big - 64k is max
+  if(nitems*40>MEMSIZE){
+    printf("Too many items");
+    return -1;
+  }
 
 //these are global...
   //initialize the mutex
-  sem_t mutex;
-  sem_init(&mutex, 1, 1);
+
+  sem_init(&mutex,0);
   //P_thread mutex init ^
 
   //initialize the counting--maybe don't start at one
-  sem_t counting; //same as full
-  sem_init(&counting, 1, 0);
+  //same as full
+  sem_init(&full, 0);
 
-  sem_t empty;
-  sem_init(&empty,1,nitems);
+
+  sem_init(&empty,nitems);
 
   // pthread_attr_init(&attr);  use one parameter
-  pthread_create(&producerid,NULL,thread_producer_function(mutex, counting, empty),NULL);
-  pthread_create(&consumerid,NULL,thread_consumer_function( mutex, counting, empty),NULL);
+  pthread_create(&producerid,NULL,thread_producer_function(),NULL);
+  pthread_create(&consumerid,NULL,thread_consumer_function(),NULL);
 
 }
