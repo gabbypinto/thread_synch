@@ -30,8 +30,7 @@ typedef struct {
 } item;
 
 item buffer_item[MEMSIZE];
-int in = 0;
-int out = 0;
+item* buffer_item;
 
 
 void sig_handler(int sig){
@@ -99,14 +98,11 @@ void *thread_producer_function(int shared_mem, sem_t mutex, sem_t counting, sem_
       //2. calculate the 16-bit checksum (cksum)
       next_produced.cksum = (unsigned short) ip_checksum(&next_produced.payload[0],PAYLOAD_SIZE);
       //printf("Checksum :0x%x (%s) \n",cksum,argv[1]);
-
-      // while (((in + 1) % BUFFER_SIZE) == out){
-      //     sleep(1);     //do nothing but sleep for 1 second
-      // }
-
       memcpy((void *)&buffer_item[in],&next_produced,sizeof(next_produced));
 
       signal(&mutex, sighandler);
+
+      //sem_post
       signal(&counting, sighandler);
 
       buffer_item[in] = next_produced;       //store next_produced into share buffer size
@@ -121,7 +117,7 @@ void *thread_producer_function(int shared_mem, sem_t mutex, sem_t counting, sem_
 
 void *thread_consumer_function(int shared_mem, sem_t mutex, sem_t counting, sem_t empty)
 {
-
+//one signal handler for global...do in main (once)
   int   shm_fd;
   void  *ptr;
   int   nbytes;
@@ -140,8 +136,9 @@ void *thread_consumer_function(int shared_mem, sem_t mutex, sem_t counting, sem_
   int count=0;
 
    while(true){
-     wait(&counting);
-     wait(&mutex);
+     //decrement empty
+     wait(&counting);  //sem_wait
+     wait(&mutex); //use  mutex lock instead
   //
   //   while(in == out){
   //     sleep(1);             //do nothing but sleep for 1 second
@@ -149,6 +146,7 @@ void *thread_consumer_function(int shared_mem, sem_t mutex, sem_t counting, sem_
   //   }
 
     memcpy((void*)&cksum2, (void*)&buffer[PAYLOAD_SIZE],sizeof(unsigned short));
+    //unlock mutex
     next_consumed = buffer_item[out];
     out = (out+1) % MEMSIZE;
 
@@ -159,12 +157,6 @@ void *thread_consumer_function(int shared_mem, sem_t mutex, sem_t counting, sem_
       printf("Exiting\n");
       exit(1);
     }
-
-    /* configure the size of the shared memory object */
-    ftruncate(shm_fd, MMAP_SIZE);
-
-    /* memory map the shared memory object */
-    ptr = mmap(0, MMAP_SIZE, PROT_READ, MAP_SHARED, shm_fd, 0);
 
     /* read the message to shared memory */
     //printf("%s\n", (char *)ptr);
@@ -178,9 +170,12 @@ void *thread_consumer_function(int shared_mem, sem_t mutex, sem_t counting, sem_
       printf("checksum mismatch: received 0x%x, expected 0x%x \n",cksum2,cksum1);
       break;
     }
+
     sigaction(SIGINT, &act, 0);
     bufferCount++;
+    //pthread mutex unlock
     signal(&mutex,sighandler);
+    //sem post
     signal(&empty,sighandler);
     next_consumed.item_no++;
     }
@@ -204,26 +199,24 @@ int main (int argc, char *argv[]){
   }
 
   nitems = (int) argv[1];
-  int shared_mem = shm_open(nitems,O_RDONLY, 0666);
+//allocate buffer based on nitem, use new or malloc. ie. if user typed in two item allocate 80bytessss
+//check if item exceeds cap, exit if too big - 64k is max
 
-  //error checking, shared memory wasn't created
-  if (shared_mem == -1) {
-      perror("Error creating shared memory");
-      return -1;
-  }
-
+//these are global...
   //initialize the mutex
   sem_t mutex;
   sem_init(&mutex, 1, 1);
-  //initialize the counting
-  sem_t counting;
+  //P_thread mutex init ^
+
+  //initialize the counting--maybe don't start at one
+  sem_t counting; //same as full
   sem_init(&counting, 1, 0);
 
   sem_t empty;
   sem_init(&empty,1,nitems);
 
-  // pthread_attr_init(&attr);
-  pthread_create(&producerid,NULL,thread_producer_function(shared_mem, mutex, counting, empty),NULL);
-  pthread_create(&consumerid,NULL,thread_consumer_function(shared_mem, mutex, counting, empty),NULL);
+  // pthread_attr_init(&attr);  use one parameter
+  pthread_create(&producerid,NULL,thread_producer_function(mutex, counting, empty),NULL);
+  pthread_create(&consumerid,NULL,thread_consumer_function( mutex, counting, empty),NULL);
 
 }
