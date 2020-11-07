@@ -15,16 +15,20 @@
 #include <pthread.h>
 #include <sys/wait.h>
 
-
-
 #define MEMSIZE 64000
 extern unsigned int ip_checksum(unsigned char *data, int length);
 #define MMAP_SIZE 4096
 #define PAYLOAD_SIZE 34
 const char *name = "OS-IPC";
-sem_t mutex;
+
+// sem_t mutex;
 sem_t full;
 sem_t empty;
+
+// pthread_mutex_t full;
+// pthread_mutex_t empty;
+pthread_mutex_t mutex;
+
 
 typedef struct {
   int item_no;          //number of the item produced
@@ -53,11 +57,6 @@ void sighandler(int signum) {
 
 void *thread_producer_function()
 {
-
-  //  printf("thread_function PRODUCER is running. Message is %s\n", message);
-//    sleep(3);
-    // strcpy(message, "Good-Bye");
-
     int   i,shm_fd;
     int   nbytes;
     void  *ptr;
@@ -90,8 +89,8 @@ void *thread_producer_function()
       //1. increment the buffer count (item_no)
       next_produced.item_no++;
 
-      wait(&full);
-      wait(&mutex);
+      sem_wait((sem_t *)&full);
+      sem_wait((sem_t *)&mutex);
 
       for(i=0;i<nbytes;i++){
         //3. generate the payload data
@@ -104,8 +103,8 @@ void *thread_producer_function()
 
       memcpy((void *)&buffer_item,&next_produced,sizeof(next_produced));
 
-      sem_post(&mutex);
-      sem_post(&full);
+      sem_post((sem_t *)&mutex);
+      sem_post((sem_t *)&full);
 
       sigaction(SIGINT, &act, 0);
     }
@@ -136,8 +135,8 @@ void *thread_consumer_function()
 
    while(true){
      //decrement empty
-     wait(&full);  //sem_wait
-     wait(&mutex); //use  mutex lock instead
+     sem_wait((sem_t *)&full);  //sem_wait
+     sem_wait((sem_t *)&mutex); //use  mutex lock instead
   //
   //   while(in == out){
   //     sleep(1);             //do nothing but sleep for 1 second
@@ -173,7 +172,8 @@ void *thread_consumer_function()
     sigaction(SIGINT, &act, 0);
     bufferCount++;
     //pthread mutex unlock
-    sem_post(&mutex);
+    //sem_post(&mutex);
+    pthread_mutex_unlock(&mutex);
     //sem post
     sem_post(&empty);
     next_consumed.item_no++;
@@ -206,21 +206,30 @@ int main (int argc, char *argv[]){
     return -1;
   }
 
+  int status;
+  int fullNum;
+  int emptyNum;
 //these are global...
   //initialize the mutex
-
-  sem_init(&mutex,0);
-  //P_thread mutex init ^
+  status = pthread_mutex_init(&mutex,0);
+  if (status!=0){
+    perror("mutex initialization failed");
+    return -1;
+  }
+  //sem_init(&mutex,0)
 
   //initialize the counting--maybe don't start at one
-  //same as full
-  sem_init(&full, 0);
+  //sem_init(&full, 0);
+  fullNum = pthread_mutex_init((pthread_mutex_t*)&full,0);
 
-
-  sem_init(&empty,nitems);
+  // sem_init(&empty,nitems);
+  emptyNum = pthread_mutex_init((pthread_mutex_t*)&empty,nitems);
 
   // pthread_attr_init(&attr);  use one parameter
   pthread_create(&producerid,NULL,thread_producer_function(),NULL);
   pthread_create(&consumerid,NULL,thread_consumer_function(),NULL);
+
+  // pthread_create(&producerid,&buffer_item,thread_producer_function,NULL);
+  // pthread_create(&consumerid,&buffer_item,thread_consumer_function,NULL);
 
 }
