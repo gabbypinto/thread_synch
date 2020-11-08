@@ -16,31 +16,22 @@
 #include <sys/wait.h>
 
 #define MEMSIZE 64000
+#define PAYLOAD_SIZE 34
+#define BUFFER_SIZE 100
 
 extern unsigned int ip_checksum(unsigned char *data, int length);
 
-#define MMAP_SIZE 4096
-#define PAYLOAD_SIZE 34
 const char *name = "OS-IPC";
 char  *message;
 int buffer_size;
 int ID[2];
-int run = 1;
 
-
-//pls work_area
-int in=0;
-int out =0;
-// sem_t mutex;
 sem_t *full =NULL;
 sem_t *empty=NULL;
-
-// pthread_mutex_t full;
-// pthread_mutex_t empty;
 pthread_mutex_t mutex;
-int j = 0;
-int k= 0;
 
+int in = 0;
+int out = 0;
 
 typedef struct {
   int item_no;          //number of the item produced
@@ -48,9 +39,7 @@ typedef struct {
   unsigned char payload[PAYLOAD_SIZE];      //random generated data
 } item;
 
-//item buffer_item[MEMSIZE];
 item* buffer_item;
-
 
 void sig_handler(int sig){
     printf("\nCtrlc found\n");
@@ -59,20 +48,15 @@ void sig_handler(int sig){
     printf("Exiting\n");
     exit(1);
 }
-void runHandler(int running){
-  run =0;
-}
 
 void *thread_producer_function(){
     int   i,shm_fd;
     int   nbytes;
     void  *ptr;
 
-    item next_produced; //item defined above
-
+    item next_produced;
     unsigned short cksum;
-
-    item next_consumed; //item defined above
+    item next_consumed;
     unsigned short cksum1,cksum2;
     unsigned char *buffer;   //change item buffer
 
@@ -84,9 +68,10 @@ void *thread_producer_function(){
     buffer = (unsigned char *)ptr;
     next_produced.item_no = 0;
 
-    printf("prod\n");
-    int item_count=0;
-    while(k<buffer_size){
+    printf("in prod\n");
+    // int item_count=0;
+
+    while(true){
       //1. increment the buffer count (item_no)
       next_produced.item_no++;
 
@@ -100,18 +85,14 @@ void *thread_producer_function(){
 
       //2. calculate the 16-bit checksum (cksum)
       next_produced.cksum = (unsigned short) ip_checksum(&next_produced.payload[0],PAYLOAD_SIZE);
-      //printf("Checksum :0x%x (%s) \n",cksum,argv[1]);
-      printf("next: %hu", next_produced.cksum);
+      // printf("Checksum :0x%x \n",cksum);
 
-      memcpy((void *)&buffer_item[k],&next_produced,sizeof(next_produced));
-      printf("Buffer item:%hu", buffer_item->cksum);
-      //memcpy((void*)&cksum2, &buffer_item[PAYLOAD_SIZE],sizeof(unsigned short));
+      memcpy((void *)&buffer_item[in],&next_produced,sizeof(next_produced));
+      buffer_item[in] = next_produced;       //store next_produced into share buffer size
+      in = (in+1) % BUFFER_SIZE;
 
       pthread_mutex_unlock(&mutex);
       sem_post((sem_t *)&full);
-      item_count++;
-      k++;
-
       //sigaction(SIGINT, &act, 0);
       printf("in while\n");
     }
@@ -119,7 +100,6 @@ void *thread_producer_function(){
     // pthread_exit("Thank you for the CPU Time");
     printf("end of while!!!!");
     pthread_exit(0);
-
 }
 
 void *thread_consumer_function(){
@@ -142,13 +122,13 @@ void *thread_consumer_function(){
   int bufferCount=0;
   int count=0;
 
-  while(j<buffer_size){
+  while(true){
     //decrement empty
     sem_wait((sem_t *)&full);  //sem_wait
     pthread_mutex_lock(&mutex); //use  mutex lock instead
-    printf("%hu\n",buffer_item->cksum);
-    memcpy((void*)&cksum2, (void *)&buffer_item,sizeof(unsigned short));
-
+    // printf("%hu\n",buffer_item->cksum);
+    memcpy((void*)&cksum2, (void *)&buffer_item[PAYLOAD_SIZE],sizeof(unsigned short));
+    out = (out+1)%BUFFER_SIZE;
     //consumer the item in next_consumed
     //1. check for no skipped buffers (item_no is continguous)
 
@@ -174,11 +154,11 @@ void *thread_consumer_function(){
     }
 
     // sigaction(SIGINT, &act, 0);
-    pthread_mutex_unlock(&mutex);
-    sem_post(empty);
     next_consumed.item_no++;
     bufferCount++;
-    j++;
+
+    pthread_mutex_unlock(&mutex);
+    sem_post(empty);
   }
     // printf("thread_function CONSUMER is running. Message is %s\n", message);
     // strcpy(message, "Good-Bye");
@@ -213,17 +193,10 @@ int main (int argc, char *argv[]){
     perror("mutex initialization failed");
     return -1;
   }
-  // //sem_init(&mutex,0)
-  //
-  // //initialize the counting--maybe don't start at one
-  // //sem_init(&full, 0);
-  // fullNum = sem_open((pthread_mutex_t*)&full,0);
-  // //
-  // // // sem_init(&empty,nitems);
-  // emptyNum = sem_open((pthread_mutex_t*)&empty,nitems);
   full = sem_open("full", O_CREAT | O_EXCL, 0644, 1);
   empty = sem_open("empty", O_CREAT | O_EXCL, 0644, nitems);
   pthread_create(&producerid,NULL,thread_producer_function,(void *) &ID[0]);
   pthread_create(&consumerid,NULL,(void *)thread_consumer_function,(void *) &ID[1]);
-  pthread_exit(0);
+  pthread_join(producerid,NULL);
+  pthread_join(consumerid,NULL);
 }
