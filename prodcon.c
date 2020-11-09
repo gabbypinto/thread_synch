@@ -24,7 +24,6 @@ void *producer_function();
 void *consumer_function();
 sem_t *full =NULL;
 sem_t *empty=NULL;
-sem_t *semid=NULL;
 
 int flag = 0;
 
@@ -55,12 +54,12 @@ void *producer_function()
     int in=0;
     item next_produced;
     next_produced.item_no=0;
-
+    int loop = 0;
     while(!flag){
       sem_wait(empty);
       pthread_mutex_lock(&mutex);
 
-      next_produced.item_no++;
+  //    next_produced.item_no++;
 
       for(int i=0;i<PAYLOAD_SIZE;i++){
         next_produced.payload[i]=(unsigned char) rand() %256;
@@ -69,6 +68,9 @@ void *producer_function()
       next_produced.cksum=(unsigned short)ip_checksum(&next_produced.payload[0],PAYLOAD_SIZE);
 
       memcpy((void *)&itemBuffer[in],(void *)&next_produced,sizeof(item));
+      next_produced.item_no++;
+      // printf("next produced item num: %d\n",next_produced.item_no);
+
 
       in=(in+1)%nitems;
       pthread_mutex_unlock(&mutex);
@@ -90,14 +92,11 @@ void *consumer_function()
 
     memcpy((void *)&next_consumed, (void *)&itemBuffer[out], sizeof(item));
 
-    //We could not get this if statement to work for valiating item no
-    // if((counter!=(next_consumed.item_no))){
-    //   printf("counter:%d\n", counter);
-    //   printf("iterm no:%d\n", next_consumed.item_no);
-    //   printf("Item numbers are incorrect");
-    //   printf("Exiting");
-    //   exit(1);
-    // }
+    if((counter!=(next_consumed.item_no))){
+      printf("Item numbers are incorrect");
+      printf("Exiting");
+      exit(1);
+    }
 
     counter++;
 
@@ -109,9 +108,12 @@ void *consumer_function()
     if(cksum1!=cksum2){
       printf("checksum mismatch: received 0x%x, expected 0x%x \n",cksum2,cksum1);
     }
+
     sem_post(empty);
     pthread_mutex_unlock(&mutex);
+
   }
+  //printf("checksum2:0x%x , checksum1:0x%x\n",cksum2,cksum1);
   pthread_exit(0);
 }
 
@@ -143,21 +145,23 @@ int main(int argc, char *argv[])
     buffer_size=nitems*40;
     itemBuffer = malloc(BUFFER_SIZE);
     //opening all 3 semaphors
+
+    sem_unlink("full");
+    sem_unlink("empty");
+
     full = sem_open("full", O_CREAT | O_EXCL, 0644, 0);
     if(full == NULL) {
       perror("Semaphore initialization failed");
       return -1;
     }
-    empty = sem_open("empty", O_CREAT | O_EXCL, 0644, 0);
+    empty = sem_open("empty", O_CREAT | O_EXCL, 0644, nitems);
     if(empty == NULL) {
       perror("Semaphore initialization failed");
       return -1;
     }
-    semid = sem_open("semid", O_CREAT | O_EXCL, 0644, 0);
-    if(semid == NULL) {
-      perror("Semaphore initialization failed");
-      return -1;
-    }
+
+    sem_unlink("full");
+    sem_unlink("empty");
     //opening Mutex
     pthread_mutex_init(&mutex, NULL);
 
@@ -172,7 +176,7 @@ int main(int argc, char *argv[])
     pthread_join(producer, NULL);
     pthread_join(consumer, NULL);
 
-    sem_unlink("semid");
+
     pthread_mutex_destroy(&mutex);
     printf("finish\n");
     free(itemBuffer);

@@ -8,5 +8,6 @@
 - To exit: ctrl-c
 
 
-#### Known Errors
+#### Known Errors--fixed
 - We could not get the item number validation to work
+- we fixed this errors by including the sem_unlink before the semaphors were created
