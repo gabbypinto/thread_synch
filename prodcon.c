@@ -1,3 +1,5 @@
+//Gabriela Pinto and Katherine Hansen
+//2318655 and 2326665
 #include <pthread.h>
 #include <semaphore.h>
 #include <stdlib.h>
@@ -133,11 +135,11 @@ int main(int argc, char *argv[])
 
     nitems = atoi(argv[1]);
     if(nitems*40>MEMSIZE || nitems<=0){
-      printf("Too many items");
+      printf("Too many items\n");
       return -1;
     }
 
-    //:)
+
     buffer_size=nitems*40;
     itemBuffer = malloc(BUFFER_SIZE);
     //opening all 3 semaphors
@@ -172,7 +174,7 @@ int main(int argc, char *argv[])
 
     sem_unlink("semid");
     pthread_mutex_destroy(&mutex);
-    printf("finish");
+    printf("finish\n");
     free(itemBuffer);
     return 0;
 }
